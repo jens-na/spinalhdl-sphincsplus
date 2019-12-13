@@ -61,3 +61,8 @@ tags
 *.xml
 *.vcd
 *.vvp
+
+simWorkspace/
+tmp/
+verilator/
+project/target/
