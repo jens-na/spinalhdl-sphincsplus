@@ -30,11 +30,10 @@ import sphincsplus.utils._
 import spinal.sim.SimManagerContext
 
 /**
- * Test vectors for FIPS 197: Advanced Encryption Standard (AES)
- * https://csrc.nist.gov/csrc/media/publications/fips/197/final/documents/fips-197.pdf (Appendix C)
+ * AES Encryption test with aes_encipher_block. This test is neccessary because
+ * Haraka uses its own KeyExpansion, hence own round keys.
  *
- * This simulation tests a ECB test vector to make sure the black box
- * for AES is connected correctly and is working as expected.
+ * This is the same AES ECB Test as in AESTopLevelSim
  *
  * setKey(000102030405060708090a0b0c0d0e0f)
  * encryptAES(00112233445566778899aabbccddeeff)
@@ -51,59 +50,59 @@ import spinal.sim.SimManagerContext
  *  R10 (Key = 13111d7fe3944a17f307a78b4d2b30c5)	 = 69c4e0d86a7b0430d8cdb78070b4c55a
  * = 69c4e0d86a7b0430d8cdb78070b4c55a
  *
- * Simulation will be done for Nk=4 and Nr=10 (Because thats what Haraka is using too)
  */
-object AESTopLevelSim {
+object AESEncTopLevelSim {
   def main(args: Array[String]): Unit = {
 
-    val plain = BigInt("00112233445566778899aabbccddeeff", 16)
-    val aesKey = BigInt("000102030405060708090a0b0c0d0e0f00000000000000000000000000000000", 16)
-    val expected_output = BigInt("69c4e0d86a7b0430d8cdb78070b4c55a", 16)
-
+    val plain0 = BigInt("00112233445566778899aabbccddeeff", 16)
+    val expected = BigInt("69c4e0d86a7b0430d8cdb78070b4c55a", 16)
+    val rc = List(
+      BigInt("000102030405060708090a0b0c0d0e0f", 16), /* key */
+      BigInt("d6aa74fdd2af72fadaa678f1d6ab76fe", 16),
+      BigInt("b692cf0b643dbdf1be9bc5006830b3fe", 16),
+      BigInt("b6ff744ed2c2c9bf6c590cbf0469bf41", 16),
+      BigInt("47f7f7bc95353e03f96c32bcfd058dfd", 16),
+      BigInt("3caaa3e8a99f9deb50f3af57adf622aa", 16),
+      BigInt("5e390f7df7a69296a7553dc10aa31f6b", 16),
+      BigInt("14f9701ae35fe28c440adf4d4ea9c026", 16),
+      BigInt("47438735a41c65b9e016baf4aebf7ad2", 16),
+      BigInt("549932d1f08557681093ed9cbe2c974e", 16),
+      BigInt("13111d7fe3944a17f307a78b4d2b30c5", 16)
+    )
     val clkConfig = ClockDomainConfig(resetKind = ASYNC, resetActiveLevel = LOW, clockEdge = RISING)
 
-    /* AES all rounds */
-    SimConfig.withConfig(SpinalConfig(defaultConfigForClockDomains = clkConfig)).withWave.compile(new AES).doSim { dut =>
+    /*
+     * AES Encipher
+     * Should work like __m128i _mm_aesenc_si128 (__m128i a, __m128i RoundKey)
+     */
+    SimConfig.withConfig(SpinalConfig(defaultConfigForClockDomains = clkConfig)).withWave.compile(new AESEnc).doSim { dut =>
       dut.clockDomain.forkStimulus(period = 10)
       SimClockCounter.count(dut.clockDomain, 10)
 
-      // Prepare KeyExpansion
-      dut.io.init #= true
-      dut.io.xnext #= false
-      dut.io.key #= aesKey
       dut.io.keylen #= false
-      dut.clockDomain.waitRisingEdge()
-      dut.io.init #= false
-
-      println("Waiting for: KeyExpansion")
-      dut.clockDomain.waitRisingEdge()
-
-      waitUntil(dut.io.ready.toBoolean == true)
-      println("KeyExpansion: OK")
-
-      // Prepare Encrypt
-      dut.io.encdec #= true
-      dut.io.xblock #= plain
+      dut.io.xblock #= plain0
+      dut.io.round_key #= rc(0)
       dut.io.xnext #= true
+
       dut.clockDomain.waitRisingEdge()
       dut.io.xnext #= false
-
-      println("Waiting for: Encrypt")
       dut.clockDomain.waitRisingEdge()
+
+      // Perform AES rounds and print round/round key/result block
+      for(j <- 0 until 10) {
+        dut.io.round_key #= rc(j+1)
+        waitUntil(dut.io.round.toInt == j+2)
+        println(s"R${dut.io.round.toInt-1} ${dut.io.round_key.toBigInt.toString(16)} = ${dut.io.new_block.toBigInt.toString(16)}")
+      }
+
+      // Wait for last round to finish
       waitUntil(dut.io.ready.toBoolean == true)
-      println("Encrypt: OK")
 
-      print("Expected output io.result: ")
-      println(expected_output.toString(16))
-
-      print("Simulation output io.result: ")
-      println(dut.io.result.toBigInt.toString(16))
-
+      // Check final result
       assert(
-        assertion = dut.io.result.toBigInt == expected_output,
-        message =  s"Is: ${dut.io.result.toBigInt}, Should: ${expected_output}"
+        assertion = dut.io.new_block.toBigInt == expected,
+        message =  s"Is: ${dut.io.new_block.toBigInt.toString(16)}, Should: ${expected.toString(16)}"
       )
-
       println(s"Simulation clock cycles: ${SimClockCounter.pop()}")
     }
   }

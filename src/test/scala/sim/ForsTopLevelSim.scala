@@ -78,7 +78,7 @@ object ForsTopLevelSim {
       print("Simulation output o_pk: ")
       dut.io.o_pk.foreach(x => print(s"${x.toLong.toHexString} ")); println()
 
-      println(s"Simulation clock cycles: ${SimClockCounter.cycles()}")
+      println(s"Simulation clock cycles: ${SimClockCounter.pop()}")
     }
   }
 }

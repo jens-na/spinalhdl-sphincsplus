@@ -20,43 +20,46 @@
  * OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
  * OR OTHER DEALINGS IN THE SOFTWARE.
  */
-package sphincsplus
+package sim
 
-import spinal.core.sim._
+
+import sphincsplus.{Haraka, HarakaConfig}
 import spinal.core._
+import spinal.core.sim._
+import sphincsplus.aes._
 import sphincsplus.utils._
-import Params._
+import spinal.sim.SimManagerContext
+import sphincsplus.Params._
 
-// Construction parameters for a Haraka instance
-case class HarakaConfig(lenInput : Int = 1024, lenOutput : Int = 256) {
-  val roundKeys = lenInput / 128 * 10
-  // TODO Print invalid parameter warnings/errors here with 'SpinalWarning()' or assert:
-  // assert(x
-  //   assertion = n == 0,1
-  //   message = "Invalid value for n",
-  //   severity = ERROR
-  // )
-}
+/**
+ *
+ */
+object HarakaTopLevelSim {
+  def main(args: Array[String]): Unit = {
 
-class HarakaIo(g: HarakaConfig) extends Bundle {
-  val block = in Bits(g.lenInput bits)
-  val result = out Bits(g.lenOutput bits)
+    val rcList = SphincsPlusUtils.harakaRoundKeys(HARAKA_1024)
+    var j = 0
+    for(rc <- rcList) {
+      println(s"RC[${j}] = ${rc.toString(16)}")
+      j = j + 1
+    }
+    val clkConfig = ClockDomainConfig(resetKind = SYNC, resetActiveLevel = HIGH, clockEdge = RISING)
 
-  val ready = out Bool
-}
+    SimConfig.withConfig(SpinalConfig(defaultConfigForClockDomains = clkConfig)).withWave.compile(new Haraka(new HarakaConfig())).doSim { dut =>
+      dut.clockDomain.forkStimulus(10)
+      SimClockCounter.count(dut.clockDomain, 10)
 
-class Haraka(g: HarakaConfig) extends Component {
-  val io = new HarakaIo(g)
+      dut.io.block #= 0
+      dut.clockDomain.waitRisingEdge()
+      dut.io.block #= 1
 
-  val test = Reg(Bits(128 bits)) .keep()
-  val roundkeys = Mem(Bits(128 bits), SphincsPlusUtils.harakaRoundKeys(g.lenInput).map(x => B(x, 128 bits)))
+      for(j <- 0 until 100) {
+        dut.clockDomain.waitRisingEdge()
+//        println(dut.roundkeys(0))
+//        println(dut.roundkeys(1))
+      }
 
-  when(io.block =/= 0) {
-    io.ready := False
-    test := roundkeys("0000001")
-  }.otherwise {
-    io.ready := True
-    test := roundkeys("0000000")
+      println(s"Simulation clock cycles: ${SimClockCounter.pop()}")
+    }
   }
-  io.result := 0
 }

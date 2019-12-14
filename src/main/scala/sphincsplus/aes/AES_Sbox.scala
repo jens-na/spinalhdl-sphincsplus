@@ -20,43 +20,27 @@
  * OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
  * OR OTHER DEALINGS IN THE SOFTWARE.
  */
-package sphincsplus
+package sphincsplus.aes
 
-import spinal.core.sim._
+import sphincsplus.BuildInfo
 import spinal.core._
-import sphincsplus.utils._
-import Params._
 
-// Construction parameters for a Haraka instance
-case class HarakaConfig(lenInput : Int = 1024, lenOutput : Int = 256) {
-  val roundKeys = lenInput / 128 * 10
-  // TODO Print invalid parameter warnings/errors here with 'SpinalWarning()' or assert:
-  // assert(x
-  //   assertion = n == 0,1
-  //   message = "Invalid value for n",
-  //   severity = ERROR
-  // )
-}
+/**
+ * The component which controls the communication with the AES encoding blackbox.
+ */
+class aes_sbox extends BlackBox {
 
-class HarakaIo(g: HarakaConfig) extends Bundle {
-  val block = in Bits(g.lenInput bits)
-  val result = out Bits(g.lenOutput bits)
-
-  val ready = out Bool
-}
-
-class Haraka(g: HarakaConfig) extends Component {
-  val io = new HarakaIo(g)
-
-  val test = Reg(Bits(128 bits)) .keep()
-  val roundkeys = Mem(Bits(128 bits), SphincsPlusUtils.harakaRoundKeys(g.lenInput).map(x => B(x, 128 bits)))
-
-  when(io.block =/= 0) {
-    io.ready := False
-    test := roundkeys("0000001")
-  }.otherwise {
-    io.ready := True
-    test := roundkeys("0000000")
+  val io = new Bundle {
+    val sboxw = in Bits(32 bits)
+    val new_sboxw = out Bits(32 bits)
   }
-  io.result := 0
+
+  // Don't prefix io_
+  noIoPrefix()
+
+  // Add RTL files
+  val aesRTL = List[String](
+    "aes_sbox.v"
+  )
+  aesRTL.foreach(file => addRTLPath(s"${BuildInfo.externalLibs}/aes/src/rtl/${file}"))
 }

@@ -63,7 +63,10 @@ object SimClockCounter {
     }
   }
 
-  def cycles(): Long = {
-    (lastTime - startTime)/2
+  def pop(): Long = {
+    val ret = (lastTime - startTime)/2
+    lastTime = 0L
+    startTime = 0L
+    ret
   }
 }

@@ -20,43 +20,45 @@
  * OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
  * OR OTHER DEALINGS IN THE SOFTWARE.
  */
-package sphincsplus
+package sphincsplus.aes
 
-import spinal.core.sim._
+import sphincsplus.BuildInfo
 import spinal.core._
-import sphincsplus.utils._
-import Params._
 
-// Construction parameters for a Haraka instance
-case class HarakaConfig(lenInput : Int = 1024, lenOutput : Int = 256) {
-  val roundKeys = lenInput / 128 * 10
-  // TODO Print invalid parameter warnings/errors here with 'SpinalWarning()' or assert:
-  // assert(x
-  //   assertion = n == 0,1
-  //   message = "Invalid value for n",
-  //   severity = ERROR
-  // )
-}
+/**
+ * The component which controls the communication with the AES encoding blackbox.
+ */
+class aes_encipher_block extends BlackBox {
 
-class HarakaIo(g: HarakaConfig) extends Bundle {
-  val block = in Bits(g.lenInput bits)
-  val result = out Bits(g.lenOutput bits)
+  val io = new Bundle {
+    val clk = in Bool
+    val reset_n = in Bool
 
-  val ready = out Bool
-}
+    val xnext = in Bool
 
-class Haraka(g: HarakaConfig) extends Component {
-  val io = new HarakaIo(g)
+    val keylen = in Bool
+    val round = out UInt(4 bits)
+    val round_key = in Bits(128 bits)
 
-  val test = Reg(Bits(128 bits)) .keep()
-  val roundkeys = Mem(Bits(128 bits), SphincsPlusUtils.harakaRoundKeys(g.lenInput).map(x => B(x, 128 bits)))
+    val sboxw = out Bits(32 bits)
+    val new_sboxw = in Bits(32 bits)
 
-  when(io.block =/= 0) {
-    io.ready := False
-    test := roundkeys("0000001")
-  }.otherwise {
-    io.ready := True
-    test := roundkeys("0000000")
+    val xblock = in Bits(128 bits)
+    val new_block = out Bits(128 bits)
+    val ready  = out Bool
   }
-  io.result := 0
+
+  // Map Clock
+  mapCurrentClockDomain(clock=io.clk, reset=io.reset_n)
+
+  // Don't prefix io_
+  noIoPrefix()
+
+  // Add RTL files
+  val aesRTL = List[String](
+    "aes_encipher_block.v",
+    "aes_key_mem.v",
+    "aes_sbox.v"
+  )
+  aesRTL.foreach(file => addRTLPath(s"${BuildInfo.externalLibs}/aes/src/rtl/${file}"))
 }
