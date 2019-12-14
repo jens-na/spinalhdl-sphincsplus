@@ -29,10 +29,3 @@ class AES extends Component {
   io.result_valid <> aes_inst.io.result_valid
 
 }
-
-object AESGen {
-  def main(args: Array[String]): Unit = {
-    val report = SpinalVerilog(new AES)
-    report.mergeRTLSource("aes_core")
-  }
-}
