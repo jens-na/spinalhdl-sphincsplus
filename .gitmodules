@@ -1,0 +1,4 @@
+[submodule "aes"]
+	path = aes
+	url = https://github.com/jens-na/aes.git
+	branch = aesni_equiv
