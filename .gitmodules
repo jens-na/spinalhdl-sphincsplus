@@ -1,4 +1,4 @@
-[submodule "aes"]
-	path = aes
+[submodule "lib/aes"]
+	path = lib/aes
 	url = https://github.com/jens-na/aes.git
 	branch = aesni_equiv
