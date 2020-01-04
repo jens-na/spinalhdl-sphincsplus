@@ -20,46 +20,34 @@
  * OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
  * OR OTHER DEALINGS IN THE SOFTWARE.
  */
-package sim
+package sphincsplus.aes
 
-
-import sphincsplus.{Haraka, HarakaConfig}
+import sphincsplus.BuildInfo
 import spinal.core._
-import spinal.core.sim._
-import sphincsplus.aes._
-import sphincsplus.utils._
-import spinal.sim.SimManagerContext
-import sphincsplus.Params._
 
 /**
- *
+ * The component which controls the communication with the AES encoding blackbox.
  */
-object HarakaTopLevelSim {
-  def main(args: Array[String]): Unit = {
+class one_round extends BlackBox {
 
-    val rcList = SphincsPlusUtils.harakaRoundKeys(HARAKA_1024)
-    var j = 0
-    for(rc <- rcList) {
-      println(s"RC[${j}] = ${rc.toString(16)}")
-      j = j + 1
-    }
-    val clkConfig = ClockDomainConfig(resetKind = SYNC, resetActiveLevel = HIGH, clockEdge = RISING)
-
-    SimConfig.withConfig(SpinalConfig(defaultConfigForClockDomains = clkConfig)).withWave.compile(new Haraka(new HarakaConfig())).doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
-      SimClockCounter.count(dut.clockDomain, 10)
-
-      dut.io.block #= 0
-      dut.clockDomain.waitRisingEdge()
-      dut.io.block #= 1
-
-      for(j <- 0 until 100) {
-        dut.clockDomain.waitRisingEdge()
-//        println(dut.roundkeys(0))
-//        println(dut.roundkeys(1))
-      }
-
-      println(s"Simulation clock cycles: ${SimClockCounter.pop()}")
-    }
+  val io = new Bundle {
+    val clk = in Bool
+    val reset = in Bool
+    val state_in = in Bits(128 bits)
+    val key = in Bits(128 bits)
+    val state_out = out Bits(128 bits)
   }
+
+  // Map Clock
+  mapCurrentClockDomain(clock=io.clk, reset =io.reset)
+
+  // Don't prefix io_
+  noIoPrefix()
+
+  // Add RTL files
+  val aesRTL = List[String](
+    "round.v",
+    "table.v"
+  )
+  aesRTL.foreach(file => addRTLPath(s"${BuildInfo.externalLibs}/aes/rtl/${file}"))
 }

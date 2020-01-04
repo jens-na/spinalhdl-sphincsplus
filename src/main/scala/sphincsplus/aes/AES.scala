@@ -55,34 +55,16 @@ class AES extends Component {
   io.result_valid <> aes_inst.io.result_valid
 }
 
-/**
- * The core AES encryption component which is used to perform AES rounds.
- * Round keys needs to be set by the caller. The default FIPS 197 S-Box is
- * used internally.
- */
-class AESEnc extends Component {
+
+class AESEnc128 extends Component {
   val io = new Bundle {
-    val xnext = in Bool
-
-    val keylen = in Bool
-    val round = out UInt(4 bits)
-    val round_key = in Bits(128 bits)
-
-    val xblock = in Bits(128 bits)
-    val new_block = out Bits(128 bits)
-    val ready  = out Bool
+    val state_in = in Bits(128 bits)
+    val key = in Bits(128 bits)
+    val state_out = out Bits(128 bits)
   }
 
-  val aes_encipher_inst = new aes_encipher_block()
-  io.xnext <> aes_encipher_inst.io.xnext
-  io.keylen <> aes_encipher_inst.io.keylen
-  io.round <> aes_encipher_inst.io.round
-  io.round_key <> aes_encipher_inst.io.round_key
-  io.xblock <> aes_encipher_inst.io.xblock
-  io.new_block <> aes_encipher_inst.io.new_block
-  io.ready <> aes_encipher_inst.io.ready
-
-  val aes_sbox = new aes_sbox()
-  aes_encipher_inst.io.sboxw <> aes_sbox.io.sboxw
-  aes_encipher_inst.io.new_sboxw <> aes_sbox.io.new_sboxw
+  val round_inst = new one_round()
+  io.state_in <> round_inst.io.state_in
+  io.key <> round_inst.io.key
+  io.state_out <> round_inst.io.state_out
 }

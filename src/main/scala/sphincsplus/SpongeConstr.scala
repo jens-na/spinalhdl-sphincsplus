@@ -1,6 +1,6 @@
 /*
  * The MIT License (MIT)
- * Copyright (c) 2019, Jens Nazarenus
+ * Copyright (c) 2020, Jens Nazarenus
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -20,46 +20,14 @@
  * OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
  * OR OTHER DEALINGS IN THE SOFTWARE.
  */
-package sphincsplus.aes
 
-import sphincsplus.BuildInfo
 import spinal.core._
+import sphincsplus.Haraka
 
 /**
- * The component which controls the communication with the AES encoding blackbox.
+ * The sponge construction component which can be used with an arbitrary
+ * transformation/permutation function f that operations on a fixed number of bits.
  */
-class aes_encipher_block extends BlackBox {
+class SpongeConstr[T <: Haraka] extends Component {
 
-  val io = new Bundle {
-    val clk = in Bool
-    val reset_n = in Bool
-
-    val xnext = in Bool
-    val raw = in Bool
-
-    val keylen = in Bool
-    val round = out UInt(4 bits)
-    val round_key = in Bits(128 bits)
-
-    val sboxw = out Bits(32 bits)
-    val new_sboxw = in Bits(32 bits)
-
-    val xblock = in Bits(128 bits)
-    val new_block = out Bits(128 bits)
-    val ready  = out Bool
-  }
-
-  // Map Clock
-  mapCurrentClockDomain(clock=io.clk, reset=io.reset_n)
-
-  // Don't prefix io_
-  noIoPrefix()
-
-  // Add RTL files
-  val aesRTL = List[String](
-    "aes_encipher_block.v",
-    "aes_key_mem.v",
-    "aes_sbox.v"
-  )
-  aesRTL.foreach(file => addRTLPath(s"${BuildInfo.externalLibs}/aes/src/rtl/${file}"))
 }

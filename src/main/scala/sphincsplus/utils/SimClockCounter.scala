@@ -7,9 +7,10 @@ import spinal.sim.{Signal, SimError, SimManager, SimManagerContext, SimThread}
 import scala.collection.mutable.ArrayBuffer
 
 /**
- * Utility object to count clock cycles in a Spinal simulation process.
- * The class looks for the first time the clock gets a high value and
- * starts counting from this point on.
+ * Utility object to count clock cycles in a Spinal simulation process. The class looks for the first time
+ * the clock gets a high value and starts counting from this point on.
+ *
+ * Might throw weird exceptions if no clk is connected.
  */
 object SimClockCounter {
 
