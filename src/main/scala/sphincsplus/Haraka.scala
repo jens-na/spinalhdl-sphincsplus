@@ -28,26 +28,32 @@ import sphincsplus.utils._
 import sphincsplus.aes.AESEnc128
 import sphincsplus.utils.SphincsPlusUtils.BitVectorExtension
 
+import scala.reflect.internal.util.NoPosition
+
+
 /**
  * Construction parameters for a Haraka instance
  * @param lenInput the input length of Haraka (1024, 512, 256)
- * @param aesInstances the number of AES cores used for parallel optimizations
  */
-case class HarakaConfig(lenInput : Int = 1024, aesInstances : Int = 1) {
-  val lenOutput = lenInput // We don't truncate anything in this implementation, we just output the states after the final round
+class HarakaConfig(val lenInput : Int = 256) {
+  val lenOutput = lenInput // We don't truncate anything in this component
   val blocks = lenInput / 128 // Number of 128-bit blocks of the state (Haraka parameter b)
   val roundKeys = blocks * 10 // Number of round keys that are needed for the calculation
   val aesRounds = 5 // Number of rounds (Haraka parameter T)
   val aesOperations = 2 // Number of AES operations (Haraka parameter m)
 
   // TODO Print invalid parameter warnings/errors here with 'SpinalWarning()' or assert:
-  // assert(x
+  // assert(
   //   assertion = n == 0,1
   //   message = "Invalid value for n",
   //   severity = ERROR
   // )
 }
 
+/**
+ * The Haraka input/output signals
+ * @param g the Haraka configuration parameters
+ */
 class HarakaIo(g: HarakaConfig) extends Bundle {
   val xblock = in Bits(g.lenInput bits)
   val result = out Bits(g.lenOutput bits)
@@ -56,13 +62,16 @@ class HarakaIo(g: HarakaConfig) extends Bundle {
   val ready = out Bool
 }
 
+/**
+ * The Haraka componenent which does the calculation
+ * @param g the Haraka configuration parameters
+ */
 class Haraka(g: HarakaConfig) extends Component {
   val io = new HarakaIo(g)
 
   // Fire values
   val busy = Reg(Bool) init(False)
   val busyInternal = RegNext(busy) init(False)
-  val clearAllCounter = RegNext(False) init(False)
 
   // The round keys to use with AES. Depending on the Haraka mode this
   // Mem is filled with 20, 40 or 80 round keys
@@ -72,13 +81,14 @@ class Haraka(g: HarakaConfig) extends Component {
   // The state holds the input divided into 128 bit values, which is necessary for
   // the AES rounds.
   val state = Reg(Vec(Bits(128 bits), g.blocks))
+  val input = Reg(Vec(Bits(128 bits), g.blocks))
   val state0 = Reg(Bits(128 bits))
   state0 := state(0)
 
   // The AES component connection
   val aes = new AESEnc128()
 
-  // Based on the Haraka mode this componenent need different cylces for the mixing
+  // Based on the Haraka mode this component need different cycles for the mixing
   // process.
   val mixingCycles = g.lenInput match {
     case 1024 => 3
@@ -88,6 +98,7 @@ class Haraka(g: HarakaConfig) extends Component {
   val aesEncodeCycles = Counter(2)
   val aesStateCounter = Counter(g.blocks)
   val mixing = Reg(Bool()) init(False)
+  val dm = Reg(Bool()) init(False)
   val mixingCounter = Counter(mixingCycles)
 
   val aesRounds = Counter(g.aesRounds)
@@ -99,11 +110,12 @@ class Haraka(g: HarakaConfig) extends Component {
   // An AES Encode process can not be finished when the mixing process is running
   aesEncodeFinsished := (aesEncodeCycles % 2 === 0) && busyInternal && !mixing
 
-  val HarakaInit = new Area {
+  val Init = new Area {
     // When init has a high value, all input data is attached.
     // The Haraka componenent will take this and place them in a register for the
     // internal states
     when(io.init) {
+      input := io.xblock.subdivideInRev(128 bits)
       state := io.xblock.subdivideInRev(128 bits)
       aesRounds.clear()
       busy := True
@@ -114,10 +126,11 @@ class Haraka(g: HarakaConfig) extends Component {
     // with the calculation of the hash.
     when(io.xnext) {
       busy := True
+      roundkeysSelector := 0
     }
   }
 
-  val HarakaAES = new Area {
+  val AES = new Area {
     // When Haraka is busy reset the counter and start counting the AES Rounds
     when(!busyInternal) {
       aesEncodeCycles.clear()
@@ -138,6 +151,8 @@ class Haraka(g: HarakaConfig) extends Component {
       roundkeysSelector := roundkeysSelector + 1
     }
 
+    // Reset the roundKeySelector to 0
+
     // Perform AES when Haraka is not mixing
     when(busy && !mixing) {
       aesEncodeCycles.increment()
@@ -146,9 +161,10 @@ class Haraka(g: HarakaConfig) extends Component {
     // State and Key selection based on the Counter
     aes.io.state_in := state(aesState)
     aes.io.key := roundkeys(roundkeysSelector)
+
   }
 
-  val HarakaMixing = new Area {
+  val Mixing = new Area {
 
     // equiv _mm_unpacklo_epi32
     def unpacklo(x: Bits, y: Bits) : Bits = {
@@ -212,7 +228,17 @@ class Haraka(g: HarakaConfig) extends Component {
       }
     }
 
+    // AES rounds are finished
     when(aesRounds.willOverflow) {
+      dm := True
+    }
+  }
+
+  val DaviesMeyer = new Area {
+    // XOR input to states (DM-effect)
+    when(dm) {
+      (state, input).zipped.map({ (s, i) => s := s ^ i })
+      dm := False
       busy := False
     }
   }
@@ -222,4 +248,222 @@ class Haraka(g: HarakaConfig) extends Component {
   // value and next to start the calculation.
   io.result := Cat(state.reverse)
   io.ready := !busy
+}
+
+/**
+ * Definition of a Haraka sponge construction
+ *
+ * @param bitWidth the bitWidth aka the inputLength (Parameter b)
+ * @param outputLen the desired output length
+ * @param capacity the capacity (Parameter c)
+ */
+class HarakaSpongeConstrConfig(val bitWidth: Int, val outputLen: Int, val capacity: Int = 256, val harakaCfg: HarakaConfig) {
+  // Determine the width of the blocks
+  val powerOfBlocks = Math.floor(Math.log10(bitWidth)/Math.log10(2.0)) // 2^x
+  val blockTotalWidth = (Math.pow(2, powerOfBlocks)).toInt
+  val bitrate = (blockTotalWidth - capacity).toInt // 512 - 256
+
+  // If bitWidth is not a power of 2 there is a remainder of y bits that has to be hashed too.
+  // If 0, there is no remainder
+  val remainderWidth = (bitWidth - blockTotalWidth).toInt
+  val remainderCount = remainderWidth / 8
+
+  println(s"remainderWidth: ${remainderWidth}, blockTotalWidth: ${blockTotalWidth}, powerOfBlocks: ${powerOfBlocks}, bitWidth: ${bitWidth}")
+
+  // TODO Print invalid parameter warnings/errors here with 'SpinalWarning()' or assert:
+  // assert(
+  //   assertion = n == 0,1
+  //   message = "Invalid value for n",
+  //   severity = ERROR
+  // )
+}
+
+/**
+ * The Sponge construction of Haraka input/output signals
+ * @param c the Haraka sponge construction parameters
+ */
+class HarakaSpongeIo(c: HarakaSpongeConstrConfig) extends Bundle {
+  val xblock = in Bits(c.bitWidth bits)
+  val result = out Bits(c.outputLen bits)
+  val init = in Bool
+  val xnext = in Bool
+  val ready = out Bool
+}
+
+/**
+ * The sponge construction for the Haraka componenent
+*/
+class HarakaSpongeConstr(c: HarakaSpongeConstrConfig) extends Component {
+  val io = new HarakaSpongeIo(c)
+
+  // Range selectors
+  val mainBlock = (c.blockTotalWidth -1 downto 0)
+  val remainderBlock = (c.bitWidth -1 downto c.blockTotalWidth)
+  val xorRangeSelector = (c.blockTotalWidth -1 downto c.blockTotalWidth - c.bitrate) // 511 downto 256 i.e.
+
+  // Based on the parameters we need to do 1..(c.blockTotalWidth / c.bitrate) absorb operations
+  val absorbOperations = (c.blockTotalWidth / c.bitrate)
+  val absorbCounter = Counter(absorbOperations + 1)
+
+  // Based on the output length we need to do 1..(c.outputLen / c.bitrate) squeeze operations
+  val squeezeOperations = (c.outputLen / c.bitrate)
+  val squeezeCounter = Counter(squeezeOperations) // + 1 for convenience to make use of counter.willOverflow
+
+  // Fire values
+  val busy = Reg(Bool) init(False)
+  val absorbBusy = Reg(Bool) init(False)
+  val squeezeBusy = Reg(Bool) init(False)
+  val remainderCtrl = Reg(Bool) init(False)
+
+  // Haraka control
+  val harakaInit = Reg(Bool) init(False)
+  val harakaBusy = Reg(Bool) init(False)
+  val harakaStart = Reg(Bool) init(False)
+  val xorInput = Reg(Bool) init(False)
+
+  // State+Remainder/Input
+  val input = Reg(Vec(Bits(c.bitrate bits), absorbOperations))
+  val state = Reg(Bits(c.blockTotalWidth bits)) init(0)
+  val remainder = Reg(Vec(Bits(8 bits), c.bitrate/8)) // 8 * 32 = 256 bits i.e.
+
+  // Haraka component
+  val haraka = new Haraka(new HarakaConfig(c.harakaCfg.lenInput)) // Haraka based on width
+  haraka.io.xblock := 0
+  haraka.io.init := False
+  haraka.io.xnext := False
+
+  val Init = new Area {
+    when(io.init) {
+
+      input := io.xblock(c.bitWidth - 1 downto c.remainderWidth).subdivideIn(c.bitrate bits)
+
+      if(c.remainderCount == 1) {
+        remainder(0) :=  U(0x1f, 8 bits).asBits
+      }
+      if(c.remainderCount > 1) {
+        for(j <- 0 until c.remainderCount - 1) {
+          val from = (c.remainderWidth - 1) - (j * 8)
+          val to = (c.remainderWidth) - (j*8) - 8
+          remainder(j) := io.xblock(from downto to)
+        }
+        remainder(c.remainderCount -1) :=  U(0x1f, 8 bits).asBits
+      }
+
+      // If remainderCount == 0, the remainder will be filled with low values.
+      remainder(c.bitrate / 8 - 1) := 128
+      List.range(c.remainderCount, c.bitrate / 8 - 1).map(x => remainder(x) := B"0000_0000")
+
+      busy := True
+      absorbCounter.clear()
+      squeezeCounter.clear()
+      absorbBusy := True
+      xorInput := True
+    }
+  }
+
+  val Xor = new Area {
+    // XOR input for every absorbation round except the last one
+    when(xorInput) {
+      state(xorRangeSelector) := state(xorRangeSelector) ^ input((absorbCounter-1).resize(1)) // Remainder?
+      absorbCounter.increment()
+      harakaInit := True
+      xorInput := False
+    }
+  }
+
+  val Absorb = new Area {
+    when(absorbBusy) {
+      // Initialize Haraka componenent
+      when(harakaInit) {
+        haraka.io.init := True
+        haraka.io.xnext := False
+        haraka.io.xblock(mainBlock) := state
+
+        harakaInit := False
+        harakaStart := True
+      }
+
+      // Start Haraka process
+      when(harakaStart) {
+        haraka.io.xblock := 0
+        haraka.io.init := False
+        haraka.io.xnext := True
+        harakaStart := False
+        harakaBusy := True
+      }
+
+      // Wait for result
+      when(harakaBusy && haraka.io.ready) {
+        state := haraka.io.result
+        harakaBusy := False
+
+        // XOR Input but omit last round of absorbation
+        when(!absorbCounter.willOverflowIfInc) {
+          xorInput := True
+        }
+
+        when(absorbCounter.willOverflowIfInc) {
+          remainderCtrl := True
+        }
+      }
+
+      // Remainder logic. If input does not fit in the n bitrate blocks
+      when(remainderCtrl) {
+        state(xorRangeSelector) := state(xorRangeSelector) ^ Cat(remainder.reverse)
+        absorbBusy := False
+        remainderCtrl := False
+
+        // Go to squeeze logic
+        squeezeBusy := True
+        harakaInit := True
+      }
+
+    }
+  }
+
+  val Squeeze = new Area {
+    when(squeezeBusy) {
+      // Initialize Haraka componenent
+      when(harakaInit) {
+        haraka.io.init := True
+        haraka.io.xnext := False
+        haraka.io.xblock(mainBlock) := state
+
+        harakaInit := False
+        harakaStart := True
+      }
+
+      // Start Haraka process
+      when(harakaStart) {
+        haraka.io.xblock := 0
+        haraka.io.init := False
+        haraka.io.xnext := True
+        harakaStart := False
+        harakaBusy := True
+      }
+
+      // Wait for result
+      when(harakaBusy && haraka.io.ready) {
+        state := haraka.io.result
+        harakaBusy := False
+        squeezeCounter.increment()
+
+        // XOR Input but omit last round of absorbation
+        when(!squeezeCounter.willOverflowIfInc) {
+          harakaInit := True
+        }
+
+        when(squeezeCounter.willOverflowIfInc) {
+          //remainderCtrl := True
+
+        }
+      }
+    }
+  }
+
+  // Result output
+  // Caller can use the busy signal to wait for a new result, if init has been used to set a new input
+  // value and next to start the calculation.
+  io.ready := !busy
+  io.result := state(c.blockTotalWidth - 1 downto c.blockTotalWidth - c.outputLen)
 }

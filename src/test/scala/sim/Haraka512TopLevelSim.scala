@@ -44,8 +44,8 @@ object Haraka512TopLevelSim {
     }
     val clkConfig = ClockDomainConfig(resetKind = ASYNC, resetActiveLevel = LOW, clockEdge = RISING)
     val input512 = BigInt("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",16)
-    val expected512= BigInt("c7caf3dad89bdfeeb6767830428da797bdc681cb931b3ad50bab8833632d717d7a4c7510388b79133e460893770652dceda34583a06ed49ddeeeed2e9ab78e12", 16)
-
+    //val expected512= BigInt("c7caf3dad89bdfeeb6767830428da797bdc681cb931b3ad50bab8833632d717d7a4c7510388b79133e460893770652dceda34583a06ed49ddeeeed2e9ab78e12", 16) // without DM
+    val expected512= BigInt("c7cbf1d9dc9ed9e9be7f723b4e80a998add793d8870e2cc213b292287f306f625a6d57331cae5f34166f22b85b2b7cf3dd9277b0945be2aae6d7d715a68ab02d", 16)
     SimConfig.withConfig(SpinalConfig(defaultConfigForClockDomains = clkConfig)).withWave.compile(new Haraka(new HarakaConfig(HARAKA_512))).doSim { dut =>
       dut.clockDomain.forkStimulus(10)
       SimClockCounter.count(dut.clockDomain, 10)

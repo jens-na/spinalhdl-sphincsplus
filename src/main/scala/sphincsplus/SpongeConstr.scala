@@ -20,14 +20,7 @@
  * OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
  * OR OTHER DEALINGS IN THE SOFTWARE.
  */
+package sphincsplus
 
 import spinal.core._
-import sphincsplus.Haraka
 
-/**
- * The sponge construction component which can be used with an arbitrary
- * transformation/permutation function f that operations on a fixed number of bits.
- */
-class SpongeConstr[T <: Haraka] extends Component {
-
-}

@@ -34,7 +34,7 @@ object SphincsPlusUtils {
         rc = rc << 4 | (piChars(3) << 3 | piChars(2) << 2 | piChars(1) << 1 | piChars(0) << 0)
 
       }
-      println(rc.toString(16))
+      //println(rc.toString(16))
       rc
     })
   }
@@ -56,6 +56,29 @@ object SphincsPlusUtils {
     def subdivideInRev(sliceWidth: BitCount): Vec[T] = {
       require(b.getWidth % sliceWidth.value == 0)
       subdivideInRev(b.getWidth / sliceWidth.value slices)
+    }
+
+    /**
+     * Split the BitVector into slice of x bits and leave the remainder untouched
+     * * @example {{{ val res = myBits.subdiviedIn(3 bits) }}}
+     * @param sliceWidth the width of the slice
+     * @return a Vector of slices
+     */
+    def subdivideInRemainder(sliceWidth: BitCount): Vec[T] = {
+      val pow = Math.floor(Math.log10(b.getWidth)/Math.log10(2.0))
+      val totalWidth = (Math.pow(2, pow)).toInt
+      b.subdivideInRemainder(totalWidth / sliceWidth.value slices)
+    }
+
+    /**
+     * Split the BitVector into x slice
+     * @example {{{ val res = myBits.subdiviedIn(3 slices) }}}
+     * @param sliceCount the width of the slice
+     * @return a Vector of slices
+     */
+    def subdivideInRemainder(sliceCount: SlicesCount): Vec[T] = {
+      val sliceWidth = b.getBitsWidth / sliceCount.value
+      Vec((0 until sliceCount.value).reverseMap(i => b(i * sliceWidth, sliceWidth bits).asInstanceOf[T]))
     }
   }
 
