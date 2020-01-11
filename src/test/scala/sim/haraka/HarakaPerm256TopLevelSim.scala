@@ -20,31 +20,22 @@
  * OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
  * OR OTHER DEALINGS IN THE SOFTWARE.
  */
-package sim
+package sim.haraka
 
-
+import sphincsplus.Params._
+import sphincsplus.utils._
 import sphincsplus.{Haraka, HarakaConfig}
 import spinal.core._
 import spinal.core.sim._
-import sphincsplus.aes._
-import sphincsplus.utils._
-import spinal.sim.SimManagerContext
-import sphincsplus.Params._
 
 /**
  *
  */
-object Haraka256TopLevelSim {
+object HarakaPerm256TopLevelSim {
   def main(args: Array[String]): Unit = {
-    val rcList = SphincsPlusUtils.obtainHarakaRoundKeys(HARAKA_1024)
-    var j = 0
-    for(rc <- rcList) {
-      println(s"RC[${j}] = ${rc.toString(16)}")
-      j = j + 1
-    }
     val clkConfig = ClockDomainConfig(resetKind = ASYNC, resetActiveLevel = LOW, clockEdge = RISING)
-    val input256 = BigInt("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", 16)
-    val expected256 = BigInt("8027ccb87949774b78d0545fb72bf70c695c2a0923cbd47bba1159efbf2b2c1c", 16)
+    val input = BigInt("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", 16)
+    val expected = BigInt("8027ccb87949774b78d0545fb72bf70c695c2a0923cbd47bba1159efbf2b2c1c", 16)
 
     SimConfig.withConfig(SpinalConfig(defaultConfigForClockDomains = clkConfig)).withWave.compile(new Haraka(new HarakaConfig(HARAKA_256))).doSim { dut =>
       dut.clockDomain.forkStimulus(10)
@@ -53,7 +44,7 @@ object Haraka256TopLevelSim {
       // Init
       dut.io.init #= true
       dut.io.xnext #= false
-      dut.io.xblock #= input256
+      dut.io.xblock #= input
       dut.clockDomain.waitRisingEdge()
 
       // Perform Haraka
@@ -67,8 +58,8 @@ object Haraka256TopLevelSim {
 
       waitUntil(dut.io.ready.toBoolean == true)
       assert(
-        assertion = dut.io.result.toBigInt == expected256,
-        message =  s"Is: ${dut.io.result.toBigInt.toString(16)}, Should: ${expected256.toString(16)}"
+        assertion = dut.io.result.toBigInt == expected,
+        message =  s"Is: ${dut.io.result.toBigInt.toString(16)}, Should: ${expected.toString(16)}"
       )
 
       println(s"Simulation clock cycles: ${SimClockCounter.pop()}")

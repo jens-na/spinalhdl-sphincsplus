@@ -268,6 +268,7 @@ class HarakaSpongeConstrConfig(val bitWidth: Int, val outputLen: Int, val capaci
   val remainderWidth = (bitWidth - blockTotalWidth).toInt
   val remainderCount = remainderWidth / 8
 
+  println(s"bitWidth: ${bitWidth}, outputLen: ${outputLen}, bitrate: ${bitrate}")
   println(s"remainderWidth: ${remainderWidth}, blockTotalWidth: ${blockTotalWidth}, powerOfBlocks: ${powerOfBlocks}, bitWidth: ${bitWidth}")
 
   // TODO Print invalid parameter warnings/errors here with 'SpinalWarning()' or assert:
@@ -306,13 +307,13 @@ class HarakaSpongeConstr(c: HarakaSpongeConstrConfig) extends Component {
   val absorbCounter = Counter(absorbOperations + 1)
 
   // Based on the output length we need to do 1..(c.outputLen / c.bitrate) squeeze operations
-  val squeezeOperations = (c.outputLen / c.bitrate)
+  val squeezeOperations = (c.outputLen / 256) // OK ? Was (c.outputLen / c.bitrate) before but when 256 / 768, nothing gets squeezed
   val squeezeCounter = Counter(squeezeOperations) // + 1 for convenience to make use of counter.willOverflow
 
   // Fire values
-  val busy = Reg(Bool) init(False)
   val absorbBusy = Reg(Bool) init(False)
   val squeezeBusy = Reg(Bool) init(False)
+  val busy = absorbBusy || squeezeBusy
   val remainderCtrl = Reg(Bool) init(False)
 
   // Haraka control
@@ -353,7 +354,6 @@ class HarakaSpongeConstr(c: HarakaSpongeConstrConfig) extends Component {
       remainder(c.bitrate / 8 - 1) := 128
       List.range(c.remainderCount, c.bitrate / 8 - 1).map(x => remainder(x) := B"0000_0000")
 
-      busy := True
       absorbCounter.clear()
       squeezeCounter.clear()
       absorbBusy := True
@@ -364,7 +364,7 @@ class HarakaSpongeConstr(c: HarakaSpongeConstrConfig) extends Component {
   val Xor = new Area {
     // XOR input for every absorbation round except the last one
     when(xorInput) {
-      state(xorRangeSelector) := state(xorRangeSelector) ^ input((absorbCounter-1).resize(1)) // Remainder?
+      state(xorRangeSelector) := state(xorRangeSelector) ^ input((absorbCounter-1).resize(log2Up(input.getBitsWidth))) // Remainder?
       absorbCounter.increment()
       harakaInit := True
       xorInput := False
@@ -455,7 +455,7 @@ class HarakaSpongeConstr(c: HarakaSpongeConstrConfig) extends Component {
 
         when(squeezeCounter.willOverflowIfInc) {
           //remainderCtrl := True
-
+          squeezeBusy := False
         }
       }
     }
