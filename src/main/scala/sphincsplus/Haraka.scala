@@ -261,7 +261,7 @@ class HarakaSpongeConstrConfig(val bitWidth: Int, val outputLen: Int, val capaci
   // Determine the width of the blocks
   val powerOfBlocks = Math.floor(Math.log10(bitWidth)/Math.log10(2.0)) // 2^x
   val blockTotalWidth = (Math.pow(2, powerOfBlocks)).toInt
-  val bitrate = (blockTotalWidth - capacity).toInt // 512 - 256
+  val bitrate = 768 // (blockTotalWidth - capacity).toInt // 512 - 256
 
   // If bitWidth is not a power of 2 there is a remainder of y bits that has to be hashed too.
   // If 0, there is no remainder
@@ -300,10 +300,10 @@ class HarakaSpongeConstr(c: HarakaSpongeConstrConfig) extends Component {
   // Range selectors
   val mainBlock = (c.blockTotalWidth -1 downto 0)
   val remainderBlock = (c.bitWidth -1 downto c.blockTotalWidth)
-  val xorRangeSelector = (c.blockTotalWidth -1 downto c.blockTotalWidth - c.bitrate) // 511 downto 256 i.e.
+  val xorRangeSelector = (c.blockTotalWidth -1 downto c.blockTotalWidth - 768) // 511 downto 256 i.e.
 
   // Based on the parameters we need to do 1..(c.blockTotalWidth / c.bitrate) absorb operations
-  val absorbOperations = (c.blockTotalWidth / c.bitrate)
+  val absorbOperations = 4 // (c.blockTotalWidth / c.bitrate) // TODO
   val absorbCounter = Counter(absorbOperations + 1)
 
   // Based on the output length we need to do 1..(c.outputLen / c.bitrate) squeeze operations
@@ -323,9 +323,11 @@ class HarakaSpongeConstr(c: HarakaSpongeConstrConfig) extends Component {
   val xorInput = Reg(Bool) init(False)
 
   // State+Remainder/Input
-  val input = Reg(Vec(Bits(c.bitrate bits), absorbOperations))
-  val state = Reg(Bits(c.blockTotalWidth bits)) init(0)
-  val remainder = Reg(Vec(Bits(8 bits), c.bitrate/8)) // 8 * 32 = 256 bits i.e.
+  val input = Reg(Vec(Bits(256 bits), 4)) // // TODO
+  val state = Reg(Bits(512 bits)) init(0) //
+  val remainder = Reg(Vec(Bits(8 bits), 32)) // 8 * 32 = 256 bits i.e.
+
+  val debugXor = input((4 - absorbCounter.value).resize(log2Up(input.size))) .keep()
 
   // Haraka component
   val haraka = new Haraka(new HarakaConfig(c.harakaCfg.lenInput)) // Haraka based on width
@@ -336,7 +338,7 @@ class HarakaSpongeConstr(c: HarakaSpongeConstrConfig) extends Component {
   val Init = new Area {
     when(io.init) {
 
-      input := io.xblock(c.bitWidth - 1 downto c.remainderWidth).subdivideIn(c.bitrate bits)
+      input := io.xblock(c.bitWidth - 1 downto c.remainderWidth).subdivideIn(256 bits)
 
       if(c.remainderCount == 1) {
         remainder(0) :=  U(0x1f, 8 bits).asBits
@@ -351,8 +353,8 @@ class HarakaSpongeConstr(c: HarakaSpongeConstrConfig) extends Component {
       }
 
       // If remainderCount == 0, the remainder will be filled with low values.
-      remainder(c.bitrate / 8 - 1) := 128
-      List.range(c.remainderCount, c.bitrate / 8 - 1).map(x => remainder(x) := B"0000_0000")
+      remainder(256 / 8 - 1) := 128 // TODO
+      List.range(c.remainderCount, 256 / 8 - 1).map(x => remainder(x) := B"0000_0000")
 
       absorbCounter.clear()
       squeezeCounter.clear()
@@ -364,7 +366,7 @@ class HarakaSpongeConstr(c: HarakaSpongeConstrConfig) extends Component {
   val Xor = new Area {
     // XOR input for every absorbation round except the last one
     when(xorInput) {
-      state(xorRangeSelector) := state(xorRangeSelector) ^ input((absorbCounter-1).resize(log2Up(input.getBitsWidth))) // Remainder?
+      state(511 downto 256) := state(511 downto 256) ^ input((3 - absorbCounter.value).resize(log2Up(input.size))) // TODO
       absorbCounter.increment()
       harakaInit := True
       xorInput := False
@@ -377,7 +379,7 @@ class HarakaSpongeConstr(c: HarakaSpongeConstrConfig) extends Component {
       when(harakaInit) {
         haraka.io.init := True
         haraka.io.xnext := False
-        haraka.io.xblock(mainBlock) := state
+        haraka.io.xblock(c.harakaCfg.lenInput -1 downto 0) := state
 
         harakaInit := False
         harakaStart := True
@@ -409,7 +411,7 @@ class HarakaSpongeConstr(c: HarakaSpongeConstrConfig) extends Component {
 
       // Remainder logic. If input does not fit in the n bitrate blocks
       when(remainderCtrl) {
-        state(xorRangeSelector) := state(xorRangeSelector) ^ Cat(remainder.reverse)
+        state(511 downto 0) := state(511 downto 0) ^ Cat(remainder.reverse).resizeLeft(512)
         absorbBusy := False
         remainderCtrl := False
 
@@ -427,7 +429,7 @@ class HarakaSpongeConstr(c: HarakaSpongeConstrConfig) extends Component {
       when(harakaInit) {
         haraka.io.init := True
         haraka.io.xnext := False
-        haraka.io.xblock(mainBlock) := state
+        haraka.io.xblock(c.harakaCfg.lenInput -1 downto 0) := state
 
         harakaInit := False
         harakaStart := True
@@ -465,5 +467,5 @@ class HarakaSpongeConstr(c: HarakaSpongeConstrConfig) extends Component {
   // Caller can use the busy signal to wait for a new result, if init has been used to set a new input
   // value and next to start the calculation.
   io.ready := !busy
-  io.result := state(c.blockTotalWidth - 1 downto c.blockTotalWidth - c.outputLen)
+  io.result := state(511 downto 512 - c.outputLen)
 }
