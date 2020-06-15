@@ -33,10 +33,10 @@ object HarakaSponge512_520TO120TopLevelSim {
     val clkConfig = ClockDomainConfig(resetKind = ASYNC, resetActiveLevel = LOW, clockEdge = RISING)
     val input = BigInt("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e" +
       "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40",16)
-    val expected = BigInt("4f15364061a06966c0153c6bea8e8f", 16)
+    val expected = BigInt("e7c1912f65b59eb1e95f7349da888b", 16)
 
     def harakaCfg = new HarakaConfig(HARAKA_512)
-    def harakaSponge = new HarakaSpongeConstr(new HarakaSpongeConstrConfig(512, 256, 256, harakaCfg)) // Remainder = 8
+    def harakaSponge = new HarakaSpongeConstr(new HarakaSpongeConstrConfig(520, 120, 256, harakaCfg)) // Remainder = 8
 
 
     SimConfig.withConfig(SpinalConfig(defaultConfigForClockDomains = clkConfig)).withWave.compile(harakaSponge).doSim { dut =>

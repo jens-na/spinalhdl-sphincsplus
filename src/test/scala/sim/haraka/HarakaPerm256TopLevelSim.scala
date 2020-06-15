@@ -37,6 +37,9 @@ object HarakaPerm256TopLevelSim {
     val input = BigInt("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", 16)
     val expected = BigInt("8027ccb87949774b78d0545fb72bf70c695c2a0923cbd47bba1159efbf2b2c1c", 16)
 
+    val input2 = BigInt("fb8a0f53b93645c7f1b463a98b73cbc4000000036e6b604d0000000000000755", 16)
+    val expected2 = BigInt("fe6cbafd46c985927846a8acc5ba9e72b07d100000bc9000000", 16)
+
     SimConfig.withConfig(SpinalConfig(defaultConfigForClockDomains = clkConfig)).withWave.compile(new Haraka(new HarakaConfig(HARAKA_256))).doSim { dut =>
       dut.clockDomain.forkStimulus(10)
       SimClockCounter.count(dut.clockDomain, 10)
@@ -44,7 +47,7 @@ object HarakaPerm256TopLevelSim {
       // Init
       dut.io.init #= true
       dut.io.xnext #= false
-      dut.io.xblock #= input
+      dut.io.xblock #= input2
       dut.clockDomain.waitRisingEdge()
 
       // Perform Haraka
@@ -58,8 +61,8 @@ object HarakaPerm256TopLevelSim {
 
       waitUntil(dut.io.ready.toBoolean == true)
       assert(
-        assertion = dut.io.result.toBigInt == expected,
-        message =  s"Is: ${dut.io.result.toBigInt.toString(16)}, Should: ${expected.toString(16)}"
+        assertion = dut.io.result.toBigInt == expected2,
+        message =  s"Is: ${dut.io.result.toBigInt.toString(16)}, Should: ${expected2.toString(16)}"
       )
 
       println(s"Simulation clock cycles: ${SimClockCounter.pop()}")

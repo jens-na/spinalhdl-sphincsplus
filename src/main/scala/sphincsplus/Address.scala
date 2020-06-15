@@ -1,6 +1,6 @@
 /*
  * The MIT License (MIT)
- * Copyright (c) 2019, Jens Nazarenus
+ * Copyright (c) 2020, Jens Nazarenus
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -21,18 +21,30 @@
  * OR OTHER DEALINGS IN THE SOFTWARE.
  */
 package sphincsplus
-
 import spinal.core._
 
-/**
- * The hash function address scheme. Responsible for the definition of the
- * 32 bytes and manipulation functions.
- */
-class Address extends Bundle {
-  val layer_addr = Bits(32 bits)
-  val tree_addr = Bits(96 bits)
-  val addr_type = Bits(32 bits)
-  val keypair_addr = Bits(32 bits)
-  val funct0 = Bits(32 bits) // chain address or tree height
+trait AddressFactory {
+  def Address() = new Address()
+}
+
+case class Address() extends Bundle {
   val funct1 = Bits(32 bits) // hash address or tree index
+  val funct0 = Bits(32 bits) // chain address or tree height
+  val keypair_addr = Bits(32 bits)
+  val addr_type = Bits(32 bits)
+  val tree_addr = Bits(96 bits)
+  val layer_addr = Bits(32 bits)
+
+  def setTreeHeight(x: UInt): Unit = {
+    funct0 := x.asBits.resize(32)
+  }
+
+  def setTreeIndex(x: UInt): Unit = {
+    funct1 := x.asBits.resize(32)
+  }
+
+  def setAddrType(x: UInt): Unit = {
+    addr_type := x.asBits.resize(32)
+  }
+
 }

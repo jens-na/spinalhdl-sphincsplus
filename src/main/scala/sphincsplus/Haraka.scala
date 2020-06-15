@@ -75,14 +75,15 @@ class Haraka(g: HarakaConfig) extends Component {
 
   // The round keys to use with AES. Depending on the Haraka mode this
   // Mem is filled with 20, 40 or 80 round keys
-  val roundkeys = Mem(Bits(128 bits), SphincsPlusUtils.obtainHarakaRoundKeys(g.lenInput).map(x => B(x, 128 bits)))
+  //val roundkeys = Mem(Bits(128 bits), SphincsPlusUtils.obtainHarakaRoundKeys(g.lenInput).map(x => B(x, 128 bits)))
+  val roundkeys = Mem(Bits(128 bits), SphincsPlusUtils.obtainHarakaRoundKeys(g.lenInput).map(x => B("0000_0000")))
   val roundkeysSelector = Reg(UInt(log2Up(g.roundKeys) bits)) init(0)
 
   // The state holds the input divided into 128 bit values, which is necessary for
   // the AES rounds.
   val state = Reg(Vec(Bits(128 bits), g.blocks))
   val input = Reg(Vec(Bits(128 bits), g.blocks))
-  val state0 = Reg(Bits(128 bits))
+  val state0 = Reg(Bits( 128 bits))
   state0 := state(0)
 
   // The AES component connection
@@ -300,16 +301,16 @@ class HarakaSpongeConstr(c: HarakaSpongeConstrConfig) extends Component {
   // Range selectors
   val mainBlock = (c.blockTotalWidth -1 downto 0)
   val remainderBlock = (c.bitWidth -1 downto c.blockTotalWidth)
-  val xorRangeSelector = (c.blockTotalWidth -1 downto c.blockTotalWidth - 768) // 511 downto 256 i.e.
+  val xorRangeSelector = (c.blockTotalWidth -1 downto 256) // 511 downto 256 i.e. // TODO 256 might not work always?
 
   // Based on the parameters we need to do 1..(c.blockTotalWidth / c.bitrate) absorb operations
-  val absorbOperations = 4 // (c.blockTotalWidth / c.bitrate) // TODO
+  val absorbOperations = c.blockTotalWidth / 256 // (c.blockTotalWidth / c.bitrate) // TODO
   val absorbCounter = Counter(absorbOperations + 1)
 
   // Based on the output length we need to do 1..(c.outputLen / c.bitrate) squeeze operations
   val squeezeOperations = (c.outputLen / 256) // OK ? Was (c.outputLen / c.bitrate) before but when 256 / 768, nothing gets squeezed
   val squeezeCounter = Counter(squeezeOperations) // + 1 for convenience to make use of counter.willOverflow
-
+  val nextSqueezeRound = Reg(Bool) init(False) // Delay squeezing by 1
   // Fire values
   val absorbBusy = Reg(Bool) init(False)
   val squeezeBusy = Reg(Bool) init(False)
@@ -318,16 +319,16 @@ class HarakaSpongeConstr(c: HarakaSpongeConstrConfig) extends Component {
 
   // Haraka control
   val harakaInit = Reg(Bool) init(False)
+
   val harakaBusy = Reg(Bool) init(False)
   val harakaStart = Reg(Bool) init(False)
   val xorInput = Reg(Bool) init(False)
 
   // State+Remainder/Input
-  val input = Reg(Vec(Bits(256 bits), 4)) // // TODO
-  val state = Reg(Bits(512 bits)) init(0) //
-  val remainder = Reg(Vec(Bits(8 bits), 32)) // 8 * 32 = 256 bits i.e.
-
-  val debugXor = input((4 - absorbCounter.value).resize(log2Up(input.size))) .keep()
+  val input = Reg(Vec(Bits(256 bits), c.blockTotalWidth / 256))
+  val result = Reg(Vec(Bits(256 bits), c.outputLen / 256))
+  val state = Reg(Bits(512 bits)) init(0) // TODO 512 should be OK when Haraka512
+  val remainder = Reg(Vec(Bits(8 bits), 32))  // 32 when capacity is 256
 
   // Haraka component
   val haraka = new Haraka(new HarakaConfig(c.harakaCfg.lenInput)) // Haraka based on width
@@ -366,7 +367,7 @@ class HarakaSpongeConstr(c: HarakaSpongeConstrConfig) extends Component {
   val Xor = new Area {
     // XOR input for every absorbation round except the last one
     when(xorInput) {
-      state(511 downto 256) := state(511 downto 256) ^ input((3 - absorbCounter.value).resize(log2Up(input.size))) // TODO
+      state(511 downto 256) := state(511 downto 256) ^ input(((input.size-1) - absorbCounter.value).resize(log2Up(input.size))) // TODO
       absorbCounter.increment()
       harakaInit := True
       xorInput := False
@@ -419,7 +420,6 @@ class HarakaSpongeConstr(c: HarakaSpongeConstrConfig) extends Component {
         squeezeBusy := True
         harakaInit := True
       }
-
     }
   }
 
@@ -447,18 +447,25 @@ class HarakaSpongeConstr(c: HarakaSpongeConstrConfig) extends Component {
       // Wait for result
       when(harakaBusy && haraka.io.ready) {
         state := haraka.io.result
+        result((squeezeCounter).resize(log2Up(squeezeOperations))) := haraka.io.result(511 downto 256)
+        //io.result(c.bitWidth - 256 * squeezeCounter.value downto c.bitWidth - 256 * squeezeCounter.value - 256) := state(511 downto 256)
         harakaBusy := False
         squeezeCounter.increment()
 
         // XOR Input but omit last round of absorbation
         when(!squeezeCounter.willOverflowIfInc) {
-          harakaInit := True
+          nextSqueezeRound := True
         }
 
         when(squeezeCounter.willOverflowIfInc) {
           //remainderCtrl := True
           squeezeBusy := False
         }
+      }
+
+      when(nextSqueezeRound) {
+        harakaInit := True
+        nextSqueezeRound := False
       }
     }
   }
@@ -467,5 +474,5 @@ class HarakaSpongeConstr(c: HarakaSpongeConstrConfig) extends Component {
   // Caller can use the busy signal to wait for a new result, if init has been used to set a new input
   // value and next to start the calculation.
   io.ready := !busy
-  io.result := state(511 downto 512 - c.outputLen)
+  io.result := Cat(result.reverse)
 }

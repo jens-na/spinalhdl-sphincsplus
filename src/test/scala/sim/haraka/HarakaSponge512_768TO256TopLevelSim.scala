@@ -37,7 +37,7 @@ object HarakaSponge512_768TO256TopLevelSim {
     val expected = BigInt("4c2108f9449279a6ba4fc0ce125800b46d542fc227943092e76eebdb813e5393", 16)
 
     def harakaCfg = new HarakaConfig(HARAKA_512)
-    def harakaSponge = new HarakaSpongeConstr(new HarakaSpongeConstrConfig(512, 256, 256, harakaCfg)) // Remainder = 8
+    def harakaSponge = new HarakaSpongeConstr(new HarakaSpongeConstrConfig(768, 256, 256, harakaCfg)) // Remainder = 8
 
 
     SimConfig.withConfig(SpinalConfig(defaultConfigForClockDomains = clkConfig)).withWave.compile(harakaSponge).doSim { dut =>

@@ -1,6 +1,6 @@
 /*
  * The MIT License (MIT)
- * Copyright (c) 2019, Jens Nazarenus
+ * Copyright (c) 2020, Jens Nazarenus
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -20,11 +20,12 @@
  * OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
  * OR OTHER DEALINGS IN THE SOFTWARE.
  */
-package sphincsplus
 
-import spinal.core.sim._
+package sphincsplus
+import sphincsplus.Params.HARAKA_512
 import spinal.core._
-import Params._
+import spinal.lib.Counter
+import sphincsplus.utils.SphincsPlusUtils.BitVectorExtension
 
 // Construction parameters for a Fors instance
 case class ForsConfig(n : Int = 16,
@@ -42,39 +43,19 @@ case class ForsConfig(n : Int = 16,
   // )
 }
 
+
 // Input/Output of a Fors instance
 class ForsIo(g: ForsConfig) extends Bundle {
-  /* Input */
-  val sk_seed, pub_seed = in Vec(Bits(8 bit), g.n)
-  val message = in Vec(Bits(8 bits), g.forsMsgBytes)
-  val sig = in Vec(Bits(8 bits), g.forsSigBytes)
-  val in_addr = in Vec(Bits(32 bits), 8)
+  val addr = in Bits(256 bits)
+  val message = in Bits(8 * g.forsMsgBytes bits)
 
-  /* Output */
-  val o_sig = out Vec(Bits(8 bits), g.forsSigBytes)
-  val o_pk = out Vec(Bits(8 bits), g.forsPkBytes)
-  val o_addr = out Vec(Bits(32 bits), 8)
-
-  /* Control parameter */
+  val result_sig = out Vec(Bits(128 bits), g.forsTrees * g.n)
+  val result_pk = out Vec(Bits(8 bits), g.forsPkBytes)
   val init = in Bool
-  val sign = in Bool
+  val xnext = in Bool
   val ready = out Bool
-
 }
 
-/**
- * The FORS component is responsible for the two operations
- *
- * a) Signing the message with the secret key from sk_seed
- *    Req: Control parameter (sign == true)
- *    - Input: sk_seed, pub_seed, message, sign
- *    - Output: o_sig, o_pk
- *
- * b) Deriving a FORS public key from a provided signature
- *    Req: Control parameter (sign == false)
- *    - Input: sig, message, pub_seed, sign
- *    - Output: o_pk
- */
 class Fors(g: ForsConfig) extends Component {
 
   /**
@@ -84,58 +65,185 @@ class Fors(g: ForsConfig) extends Component {
    * @return the message index
    */
   def to_message_idx(m: UInt, j: UInt, offset: UInt) : UInt = {
-    return (((m >> (offset & 0x7)) & 0x1) << j.resize(8))
+    (((m >> (offset & 0x7)) & 0x1) << j.resize(8))
   }
 
   val io = new ForsIo(g)
-  val indices = Reg(Vec(Bits(32 bits), g.forsTrees)) simPublic()
-  val roots = Reg(Vec(Vec(Bits(8 bits), g.n), g.forsTrees)) .keep() // FORS_TREES * FORS_N roots
 
-  val Setup = new Area {
-    val fire = io.init
+  // fire values
+  val prepareAddresses = Reg(Bool) init(False)
+  val prepTreeAddress = Reg(Bool) init(False)
+  val calcSkHaraka = Reg(Bool) init(False)
+  val calcIndices = Reg(Bool) init(False)
+  val initCalcSk = Reg(Bool) init(False)
+  val treeHashGenSk = Reg(Bool) init(False)
+  val treeHashGenLeaf = Reg(Bool) init(False)
 
-    when(fire) {
-      indices.map(_ := B"0000_0000".resize(32))
+  // Haraka
+  val haraka = new Haraka(new HarakaConfig(256))
+  haraka.io.xblock := 0
+  haraka.io.init := False
+  haraka.io.xnext := False
+  val harakaInit = Reg(Bool) init(False)
+  val harakaBusy = Reg(Bool) init(False)
+  val harakaStart = Reg(Bool) init(False)
+
+  def harakaCfg = new HarakaConfig(HARAKA_512)
+  val harakaS = new HarakaSpongeConstr(new HarakaSpongeConstrConfig(512, 256, 256, harakaCfg))
+  harakaS.io.xblock := 0
+  harakaS.io.init := False
+  harakaS.io.xnext := False
+  val harakaSpongeInit = Reg(Bool) init(False)
+  val harakaSpongeBusy = Reg(Bool) init(False)
+  val harakaSpongeStart = Reg(Bool) init(False)
+
+  // Counter
+  val forsTreeCounter = Counter(g.forsTrees)
+
+  val busy = Reg(Bool) init(False)
+  val message = Reg(Vec(Bits(8 bits), g.forsMsgBytes))
+  val indices = Reg(Vec(Bits(32 bits), g.forsTrees))
+  val sig = Reg(Vec(Bits(128 bits), g.forsTrees * g.n)) keep()
+
+  // Treehash
+  val leafCount = (1 << g.forsHeight)
+  val leafCounter = Counter(leafCount)
+  //val leafs = Vec(Vec((Bits())))
+
+
+  val AddressCtrl = new Area {
+    val in = RegNextWhen(Address(), io.init)
+    val forsTreeAddr = Reg(Address())
+
+    when(prepareAddresses) {
+      // TODO what to do with the address
+      forsTreeAddr.setAddrType(Params.ADDR_TYPE_FORSTREE)
+      prepareAddresses := False
     }
   }
 
-  // Interpret the message as g.forsHeight bit numbers.
-  // Calculation in parallel, ready after g.forsTrees clock cycles
   val Indices = new Area {
-    val fire = io.sign
-    val curTree = Reg(UInt(log2Up(g.forsTrees) bits)) init(0) simPublic()
-    val offset = curTree * g.forsHeight simPublic()
+    val curTree = Reg(UInt(log2Up(g.forsTrees) bits)) init(0) keep()
+    val offset = (curTree * g.forsHeight) keep()
     val seqList = List.range(0, g.forsHeight)
 
-    when(fire && curTree < g.forsTrees) {
-      val idxList = seqList.map(x => to_message_idx(io.message(offset + x >> 3).asUInt, x, (offset + x)))
+    when(calcIndices && curTree < g.forsTrees) {
+      val idxList = seqList.map(x => to_message_idx(message(offset + x >> 3).asUInt, x, (offset + x)))
       indices(curTree) := (idxList.foldLeft(U(0))(_^_)).asBits.resize(32)
       curTree := curTree + 1
     }
-    io.ready := curTree === g.forsTrees
-  }
 
-  // Generate a k*t FORS private key (leaf of the FORS tree) given an address and the provided sk_seed.
-  val SKGen = new Area {
-
-  }
-
-  for(j <- 0 until g.forsTrees) {
-    for(k <- 0 until g.n) {
-      roots(j)(k) := B"0".resize(8)
+    when(calcIndices && curTree === g.forsTrees) {
+      calcIndices := False
+      initCalcSk := True
+      prepTreeAddress := True
     }
   }
 
-  io.o_addr(4) := ADDR_TYPE_FORSTREE
-  io.o_addr(0) := B"0000_0000".resize(32)
-  io.o_addr(1) := B"0000_0000".resize(32)
-  io.o_addr(2) := B"0000_0000".resize(32)
-  io.o_addr(3) := B"0000_0000".resize(32)
-  io.o_addr(5) := B"0000_0000".resize(32)
-  io.o_addr(6) := B"0000_0000".resize(32)
-  io.o_addr(7) := B"0000_0000".resize(32)
+  val Init = new Area {
+    when(io.init && !busy) {
+      message := io.message.subdivideInRev(8 bits)
+      AddressCtrl.in.assignFromBits(io.addr)
+      AddressCtrl.forsTreeAddr.assignFromBits(io.addr)
+      prepareAddresses := True
+      indices.map(_ := B"0000_0000".resize(32))
+      forsTreeCounter.clear()
+    }
 
-  io.o_sig.map(_ := B"0000_0000")
-  io.o_pk.map(_ := B"0000_0000")
+    when(io.xnext && !busy) {
+      calcIndices := True
+      busy := True
+    }
+  }
 
+  val GenSk = new Area {
+
+    // Prepare the GenSk calculation. Prepare address dependent on the current
+    // forsTreeCounter value
+    when(initCalcSk && prepTreeAddress) {
+      val treeIndex = indices(forsTreeCounter).asUInt + (forsTreeCounter * (1 << g.forsHeight))
+      AddressCtrl.forsTreeAddr.setTreeHeight(U(0))
+      AddressCtrl.forsTreeAddr.setTreeIndex(treeIndex)
+      prepTreeAddress := False
+      harakaInit := True
+    }
+
+    when(initCalcSk && harakaInit) {
+      haraka.io.init := True
+      haraka.io.xnext := False
+      haraka.io.xblock := AddressCtrl.forsTreeAddr.asBits
+
+      harakaInit := False
+      harakaStart := True
+    }
+
+    // Start Haraka process
+    when(initCalcSk && harakaStart) {
+      haraka.io.xblock := 0
+      haraka.io.init := False
+      haraka.io.xnext := True
+      harakaStart := False
+      harakaBusy := True
+    }
+
+    // Wait for result
+    when(initCalcSk && harakaBusy && haraka.io.ready) {
+      harakaBusy := False
+      //sig(0).assignFromBits(haraka.io.result(255 downto 128))
+      sig(0) := haraka.io.result(255 downto 128)
+      initCalcSk := False
+      treeHashGenSk := True
+      prepTreeAddress := True
+      harakaInit := True
+    }
+  }
+
+  val Treehash = new Area {
+    val offset = Reg(UInt(8 bits)) init(0)
+    val stack = Reg(Vec(Bits(8 bits), g.forsHeight * g.n))
+
+    when(treeHashGenSk && prepTreeAddress) {
+      val treeIndex = indices(forsTreeCounter).asUInt + (forsTreeCounter * (1 << g.forsHeight))
+      AddressCtrl.forsTreeAddr.setTreeHeight(U(0))
+      AddressCtrl.forsTreeAddr.setTreeIndex(offset + leafCounter.value)
+      prepTreeAddress := False
+      harakaInit := True
+    }
+    when(treeHashGenSk && harakaInit) {
+      haraka.io.init := True
+      haraka.io.xnext := False
+      haraka.io.xblock := AddressCtrl.forsTreeAddr.asBits
+
+      harakaInit := False
+      harakaStart := True
+    }
+    when(treeHashGenSk && harakaStart) {
+      haraka.io.xblock := 0
+      haraka.io.init := False
+      haraka.io.xnext := True
+      harakaStart := False
+      harakaBusy := True
+    }
+
+    // Wait for result
+    when(treeHashGenSk && harakaBusy && haraka.io.ready) {
+      harakaBusy := False
+      //sig(0).assignFromBits(haraka.io.result(255 downto 128))
+      sig(1) := haraka.io.result(255 downto 128)
+      prepTreeAddress := True
+      treeHashGenSk := True
+      harakaInit := True
+    }
+  }
+
+  // DEBUG VALUES
+  // -------------
+  val dbg_forsTreeAddr = AddressCtrl.forsTreeAddr.asBits keep()
+  // -------------
+
+  for(j <- 0 until 160) {
+    io.result_sig(j) := 0
+  }
+  io.result_pk.map(_ := B"0000_0000")
+  io.ready := leafCounter.willOverflow
 }

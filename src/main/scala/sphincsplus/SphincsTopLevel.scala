@@ -28,11 +28,11 @@ class SphincsTopLevel(forsCfg: ForsConfig) extends Component {
   val io = new Bundle {
 
   }
-  val fors = new Fors(forsCfg)
-  fors.io.sign := True
-  fors.io.sk_seed.map(_ := B"0000_0000")
-  fors.io.pub_seed.map(_ := B"0000_0000")
-  fors.io.message.map(_ := B"0000_0000")
+//  val fors = new Fors(forsCfg)
+//  fors.io.sign := True
+//  fors.io.sk_seed.map(_ := B"0000_0000")
+//  fors.io.pub_seed.map(_ := B"0000_0000")
+//  fors.io.message.map(_ := B"0000_0000")
 }
 
 //object TopLevelSphincsPlus {
